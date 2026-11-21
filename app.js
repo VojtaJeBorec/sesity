@@ -192,7 +192,7 @@ const DB = {
 };
 
 const state = { groups: [] };
-const prefs = Object.assign({ finger: false, scratch: true, tool: 'pen', shape: 'line',
+const prefs = Object.assign({ finger: false, scratch: true, shapes: true, tool: 'pen', shape: 'line',
   color: { pen: PEN_COLORS[0], hl: HL_COLORS[0], text: PEN_COLORS[0], shape: PEN_COLORS[1] },
   wi: { pen: 1, hl: 1, text: 1, shape: 1 } }, (() => { try { return JSON.parse(localStorage.getItem('sesity-prefs')) || {}; } catch { return {}; } })());
 const savePrefs = () => { try { localStorage.setItem('sesity-prefs', JSON.stringify(prefs)); } catch {} };
@@ -611,7 +611,7 @@ function showHelp() {
   formDialog({ title: 'Jak na to', ok: 'Rozumím', cancel: '', html: `<ul>
     <li><b>Škrtnutí maže.</b> Co napíšete perem a pak rychle přeškrtáte tam a zpět (cik-cak), to zmizí. Když se to stane omylem, klepněte na šipku Zpět.</li>
     <li><b>Tlačítko na peru = guma.</b> Držte tlačítko na S Penu a přejeďte přes to, co chcete smazat.</li>
-    <li><b>Podržte pero na konci tahu</b> a čára se narovná; nakreslené kolečko nebo obdélník se vyhladí.</li>
+    <li><b>Tvary se samy vyhladí.</b> Větší rovná čára, kruh, trojúhelník nebo obdélník se po dokreslení srovná a dotáhne. Když to nechcete, klepněte na Zpět a vrátí se původní tah. U menších tvarů podržte pero na konci tahu.</li>
     <li><b>Prst posouvá, pero píše.</b> Dvěma prsty stránku přiblížíte, dvojitým klepnutím prstem zvětšíte a vrátíte.</li>
     <li><b>Klepnutí dvěma prsty = zpět</b>, třemi prsty = znovu.</li>
     <li><b>Švih prstem do strany</b> otočí na další nebo předchozí stránku.</li>
@@ -925,31 +925,95 @@ function armHold(a) {
   if (a.item.tool !== 'pen' || a.snap) return;
   a.hold = setTimeout(() => { if (act === a) snapStroke(a); }, 650);
 }
-function snapStroke(a) {
-  const it = a.item, p = it.p, n = p.length / 3; if (n < 8) return;
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, len = 0, dev = 0;
+/* Zjednodušení lomené čáry (Ramer–Douglas–Peucker). */
+function rdp(pts, eps) {
+  if (pts.length < 3) return pts.slice();
+  const a = pts[0], b = pts[pts.length - 1]; let m = 0, mi = 0;
+  for (let i = 1; i < pts.length - 1; i++) { const d = segDist2(pts[i][0], pts[i][1], a[0], a[1], b[0], b[1]); if (d > m) { m = d; mi = i; } }
+  if (Math.sqrt(m) <= eps) return [a, b];
+  return rdp(pts.slice(0, mi + 1), eps).slice(0, -1).concat(rdp(pts.slice(mi), eps));
+}
+/* Pozná v tahu rovnou čáru, trojúhelník, čtyřúhelník, kruh nebo elipsu a vrátí jejich čisté body.
+   strict = automaticky po dopsání (musí sedět přesně), jinak po podržení pera (benevolentnější). */
+function recognizeShape(p, strict) {
+  const n = p.length / 3; if (n < 6) return null;
+  const pts = []; let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, len = 0, dev = 0;
   const e = p.length - 3;
   for (let i = 0; i < p.length; i += 3) {
+    pts.push([p[i], p[i + 1]]);
     x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); y0 = Math.min(y0, p[i + 1]); y1 = Math.max(y1, p[i + 1]);
     if (i) len += Math.hypot(p[i] - p[i - 3], p[i + 1] - p[i - 2]);
     dev = Math.max(dev, segDist2(p[i], p[i + 1], p[0], p[1], p[e], p[e + 1]));
   }
   const D = Math.hypot(x1 - x0, y1 - y0), L = Math.hypot(p[e] - p[0], p[e + 1] - p[1]);
-  if (D * view.s < 60) return; // malá písmena nenarovnávat
-  let pts;
-  if (L > 0.6 * D && Math.sqrt(dev) < Math.max(4 / view.s, 0.1 * L) && len < 1.4 * L) { pts = [p[0], p[1], p[e], p[e + 1]]; a.snap = 'line'; }
-  else if (L < 0.3 * D && len > 2 * D) {
-    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, rx = (x1 - x0) / 2 || 1, ry = (y1 - y0) / 2 || 1; let eE = 0, eR = 0;
-    for (let i = 0; i < p.length; i += 3) {
-      const ux = Math.abs(p[i] - cx) / rx, uy = Math.abs(p[i + 1] - cy) / ry;
-      eE += Math.abs(Math.hypot(ux, uy) - 1); eR += Math.min(1 - ux, 1 - uy);
+  if (!D) return null;
+  // rovná čára
+  if (L > 0.6 * D && Math.sqrt(dev) < (strict ? 0.045 : 0.1) * L && len < (strict ? 1.15 : 1.4) * L) {
+    let ex = p[e], ey = p[e + 1];
+    if (Math.abs(ey - p[1]) < L * 0.04) ey = p[1]; else if (Math.abs(ex - p[0]) < L * 0.04) ex = p[0];
+    return { kind: 'line', pts: [p[0], p[1], ex, ey] };
+  }
+  // uzavřený tvar
+  if (L > (strict ? 0.2 : 0.3) * D || len < 2 * D) return null;
+  const tol = (strict ? 0.035 : 0.09) * D;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2; let rx = (x1 - x0) / 2 || 1, ry = (y1 - y0) / 2 || 1, eE = 0;
+  for (const q of pts) eE += Math.abs(Math.hypot((q[0] - cx) / rx, (q[1] - cy) / ry) - 1);
+  eE = eE / n * Math.min(rx, ry);
+  // mnohoúhelník: rozdělit v nejvzdálenějším bodě, zjednodušit a zahodit skoro rovné vrcholy
+  let f = 0, fd = 0; pts.forEach((q, i) => { const d = Math.hypot(q[0] - pts[0][0], q[1] - pts[0][1]); if (d > fd) { fd = d; f = i; } });
+  let poly = rdp(pts.slice(0, f + 1), 0.06 * D).concat(rdp(pts.slice(f), 0.06 * D).slice(1));
+  if (poly.length > 3 && Math.hypot(poly[0][0] - poly[poly.length - 1][0], poly[0][1] - poly[poly.length - 1][1]) < 0.2 * D) poly.pop();
+  for (let changed = true; changed && poly.length > 3;) {
+    changed = false;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[(i + poly.length - 1) % poly.length], b = poly[i], c = poly[(i + 1) % poly.length];
+      const ang = Math.abs(Math.atan2(a[1] - b[1], a[0] - b[0]) - Math.atan2(c[1] - b[1], c[0] - b[0])) * 180 / Math.PI;
+      const short = Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.12 * D;
+      if (Math.min(ang, 360 - ang) > 150 || short) { poly.splice(i, 1); changed = true; break; }
     }
-    if (eE < eR) { pts = []; for (let i = 0; i <= 48; i++) pts.push(cx + rx * Math.cos(i / 24 * Math.PI), cy + ry * Math.sin(i / 24 * Math.PI)); }
-    else pts = [x0, y0, x1, y0, x1, y1, x0, y1, x0, y0];
-    a.snap = 'fixed';
-  } else return;
+  }
+  let eP = Infinity;
+  if (poly.length === 3 || poly.length === 4) {
+    eP = 0;
+    for (const q of pts) {
+      let m = Infinity;
+      for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; m = Math.min(m, segDist2(q[0], q[1], a[0], a[1], b[0], b[1])); }
+      eP += Math.sqrt(m);
+    }
+    eP /= n;
+  }
+  if (eP <= eE && eP < tol) {
+    if (poly.length === 4) {
+      // skoro vodorovné/svislé hrany → pravidelný obdélník
+      const straight = poly.every((a, i) => { const b = poly[(i + 1) % 4], t = Math.abs(Math.atan2(b[1] - a[1], b[0] - a[0])) * 180 / Math.PI % 90; return Math.min(t, 90 - t) < 14; });
+      if (straight) poly = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+    } else {
+      for (let i = 0; i < 3; i++) { const a = poly[i], b = poly[(i + 1) % 3]; if (Math.abs(a[1] - b[1]) < 0.08 * Math.abs(a[0] - b[0])) a[1] = b[1] = (a[1] + b[1]) / 2; }
+    }
+    const out = []; poly.concat([poly[0]]).forEach(q => out.push(q[0], q[1]));
+    return { kind: 'poly', pts: out };
+  }
+  if (eE < tol * 1.3) {
+    if (Math.abs(rx - ry) < 0.12 * Math.max(rx, ry)) rx = ry = (rx + ry) / 2;
+    const out = []; for (let i = 0; i <= 48; i++) out.push(cx + rx * Math.cos(i / 24 * Math.PI), cy + ry * Math.sin(i / 24 * Math.PI));
+    return { kind: 'ellipse', pts: out };
+  }
+  return null;
+}
+function shapedItem(it, pts) {
   const q = []; for (let i = 0; i < pts.length; i += 2) q.push(r2(pts[i]), r2(pts[i + 1]), 0.5);
-  a.item = { ...it, u: 1, p: q }; a.direct = false; req('ink');
+  return { ...it, id: uid(), u: 1, p: q };
+}
+function strokeDiag(p) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < p.length; i += 3) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); y0 = Math.min(y0, p[i + 1]); y1 = Math.max(y1, p[i + 1]); }
+  return Math.hypot(x1 - x0, y1 - y0);
+}
+function snapStroke(a) {
+  const it = a.item; if (strokeDiag(it.p) * view.s < 60) return; // malá písmena nenarovnávat
+  const sh = recognizeShape(it.p, false); if (!sh) return;
+  a.snap = sh.kind === 'line' ? 'line' : 'fixed';
+  a.item = shapedItem(it, sh.pts); a.direct = false; req('ink');
   if (navigator.vibrate) navigator.vibrate(12);
   req('live');
 }
@@ -1084,7 +1148,31 @@ function finishStroke(it, direct) {
     const hits = scratchTargets(it, pg.items);
     if (hits.size) { if (navigator.vibrate) navigator.vibrate(12); commit(pg.items.filter(i => !hits.has(i.id))); return; }
   }
-  commit([...pg.items, it], it, direct && !it.u);
+  const base = pg.items;
+  commit([...base, it], it, direct && !it.u);
+  if (it.tool === 'pen' && !it.u && prefs.shapes && strokeDiag(it.p) * view.s >= 90) {
+    const sh = recognizeShape(it.p, true);
+    if (sh) commit([...base, shapedItem(it, sh.pts)]);
+  }
+}
+
+/* Převod ručně psaného výběru na text – jen tam, kde to prohlížeč umí (Handwriting Recognition API). */
+const canRecognize = 'createHandwritingRecognizer' in navigator && typeof HandwritingStroke !== 'undefined';
+async function selToText() {
+  const its = ed.page.items.filter(i => ed.sel && ed.sel.ids.has(i.id) && i.t === 's' && i.tool === 'pen');
+  if (!its.length) return;
+  try {
+    let rec;
+    try { rec = await navigator.createHandwritingRecognizer({ languages: ['cs'] }); }
+    catch { rec = await navigator.createHandwritingRecognizer({ languages: ['en'] }); }
+    const d = rec.startDrawing({ recognitionType: 'text', inputType: 'stylus' });
+    its.forEach((it, k) => { const st = new HandwritingStroke(); for (let i = 0; i < it.p.length; i += 3) st.addPoint({ x: it.p[i], y: it.p[i + 1], t: k * 1000 + i }); d.addStroke(st); });
+    const pred = await d.getPrediction(); rec.finish && rec.finish();
+    const text = pred && pred[0] && pred[0].text; if (!text) return toast('Písmo se nepodařilo přečíst.');
+    const b = ed.sel.box, ids = new Set(its.map(i => i.id));
+    const t = { id: uid(), t: 't', x: r2(b.x), y: r2(b.y), s: r2(clamp(b.h * 0.75, 10, 40)), c: its[0].c, text };
+    clearSel(); commit([...ed.page.items.filter(i => !ids.has(i.id)), t]); setSel(new Set([t.id]));
+  } catch (e) { console.error(e); toast('Rozpoznání písma tady není k dispozici.'); }
 }
 function finishLasso(a, p) {
   const pg = ed.page, ids = new Set();
@@ -1289,6 +1377,7 @@ function editorMenu(anchor) {
     null,
     { label: 'Přizpůsobit na šířku', fn: fitView },
     { label: (prefs.scratch ? '✓ ' : '') + 'Mazat škrtnutím', fn: () => { prefs.scratch = !prefs.scratch; savePrefs(); toast(prefs.scratch ? 'Škrtnutí teď maže.' : 'Mazání škrtnutím je vypnuté.'); } },
+    { label: (prefs.shapes ? '✓ ' : '') + 'Vyhlazovat tvary', fn: () => { prefs.shapes = !prefs.shapes; savePrefs(); toast(prefs.shapes ? 'Čáry a tvary se teď samy vyhladí.' : 'Vyhlazování tvarů je vypnuté.'); } },
     { label: 'Uložit sešit jako PDF', fn: () => exportPdf(ed.nb) },
     { label: 'Nápověda', fn: showHelp },
   ].filter(x => x !== false));
@@ -1328,6 +1417,7 @@ function wire() {
   $('#pgNext').onclick = () => gotoPage(ed.idx + 1);
   $('#pgNum').onclick = () => ($('#thumbs').hidden ? openThumbs() : closeThumbs());
   $('#pgAdd').onclick = addPage;
+  if (canRecognize) { const b = h('button', { onclick: selToText }, 'Na text'); $('#selbar').prepend(b); }
   $('#selDel').onclick = () => { if (!ed.sel) return; const ids = ed.sel.ids; clearSel(); commit(ed.page.items.filter(i => !ids.has(i.id))); };
   $('#selDup').onclick = () => {
     if (!ed.sel) return;
@@ -1361,4 +1451,4 @@ function wire() {
 })();
 
 // pro ladění
-window.__app = { ed, view, prefs, DB, isScribble, importPdfAsNotebook, pdfToPages, insertPages };
+window.__app = { ed, view, prefs, DB, isScribble, recognizeShape, importPdfAsNotebook, pdfToPages, insertPages };
