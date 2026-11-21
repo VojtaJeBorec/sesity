@@ -1,6 +1,6 @@
 /* Offline režim: soubory aplikace se berou ze sítě, a když síť není, z mezipaměti.
    Knihovny z CDN se stáhnou jednou a pak se berou z mezipaměti. */
-const CACHE = 'sesity-v2';
+const CACHE = 'sesity-v3';
 const APP = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 const CDN = [
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
@@ -19,9 +19,10 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) {
-    if (!CDN.includes(req.url)) return;
+    // knihovny z CDN a data pro čtení písma: jednou stáhnout, pak z mezipaměti
+    if (!CDN.includes(req.url) && url.hostname !== 'cdn.jsdelivr.net') return;
     e.respondWith(caches.match(req.url).then(hit => hit || fetch(req.url, { mode: 'cors' }).then(res => {
-      const copy = res.clone(); caches.open(CACHE).then(c => c.put(req.url, copy)); return res;
+      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req.url, copy)); } return res;
     })));
     return;
   }

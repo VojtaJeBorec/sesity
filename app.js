@@ -3,6 +3,7 @@
 
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
 const PDFW = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const TESS = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 const JSPDF = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
 
 const NB_COLORS = ['#2f6fed', '#e5484d', '#2e9e5b', '#f08c00', '#8a3fd1', '#0f9aa8', '#d6409f', '#5b6474'];
@@ -109,6 +110,9 @@ function formDialog({ title, text, html, fields = [], ok = 'Uložit', danger = f
       if (f.type === 'text') {
         const i = h('input', { type: 'text', value: f.value || '', autocomplete: 'off' });
         row.append(i); get[f.key] = () => i.value.trim();
+      } else if (f.type === 'textarea') {
+        const i = h('textarea', { rows: 4, style: 'width:100%;border-radius:12px;border:1px solid var(--line);padding:10px 12px;font:inherit;resize:vertical' });
+        i.value = f.value || ''; row.append(i); get[f.key] = () => i.value.trim();
       } else if (f.type === 'select') {
         const s = h('select', {}, f.options.map(o => h('option', { value: o[0] }, o[1])));
         s.value = f.value; row.append(s); get[f.key] = () => s.value;
@@ -616,7 +620,7 @@ function showHelp() {
     <li><b>Klepnutí dvěma prsty = zpět</b>, třemi prsty = znovu.</li>
     <li><b>Švih prstem do strany</b> otočí na další nebo předchozí stránku.</li>
     <li><b>Prezentace.</b> Nahrajte PDF a pište přímo do něj. PowerPoint je potřeba nejdřív uložit jako PDF.</li>
-    <li><b>Laso</b> vybere, co obkroužíte. Výběr jde přesunout, zvětšit za roh, přebarvit nebo smazat.</li>
+    <li><b>Laso</b> vybere, co obkroužíte. Výběr jde přesunout, zvětšit za roh, přebarvit nebo smazat. Tlačítkem <b>Na text</b> se ručně psaná slova převedou na tiskový text – nejlíp to čte větší, čitelná tiskací písmena.</li>
     <li><b>Zvýrazňovač</b> rovnou čáru sám narovná.</li>
     <li><b>Záloha.</b> Poznámky jsou uložené jen v tomto tabletu. Občas si v nabídce ⋯ udělejte zálohu.</li>
   </ul>` });
@@ -947,6 +951,40 @@ function recognizeShape(p, strict) {
   }
   const D = Math.hypot(x1 - x0, y1 - y0), L = Math.hypot(p[e] - p[0], p[e + 1] - p[1]);
   if (!D) return null;
+  // vlnovka: pravidelné výkyvy kolem přímky od začátku ke konci → hladká sinusovka
+  if (L > 0.6 * D) {
+    const ux = (p[e] - p[0]) / L, uy = (p[e + 1] - p[1]) / L, td = []; let mono = true, far = 0, amp = 0;
+    for (const q of pts) {
+      const t = (q[0] - p[0]) * ux + (q[1] - p[1]) * uy, d = -(q[0] - p[0]) * uy + (q[1] - p[1]) * ux;
+      if (t < far - 0.06 * L) mono = false; far = Math.max(far, t); amp = Math.max(amp, Math.abs(d)); td.push([t, d]);
+    }
+    // proložit osu vlnky (nejmenší čtverce), ať nevadí, že začátek a konec nejsou ve stejné výšce
+    let mt = 0, md = 0, stt = 0, std = 0;
+    for (const [t, d] of td) { mt += t; md += d; } mt /= n; md /= n;
+    for (const [t, d] of td) { stt += (t - mt) * (t - mt); std += (t - mt) * (d - md); }
+    const sl = stt ? std / stt : 0, base = t => md + sl * (t - mt);
+    amp = 0; for (const q of td) { q[1] -= base(q[0]); amp = Math.max(amp, Math.abs(q[1])); }
+    if (mono && amp > Math.max(0.012 * L, 3.5 / view.s)) {
+      const peaks = []; let cur = null;
+      for (const [t, d] of td) {
+        const sg = d > 0.35 * amp ? 1 : d < -0.35 * amp ? -1 : 0; if (!sg) continue;
+        if (cur && cur.s === sg) { if (Math.abs(d) > Math.abs(cur.d)) { cur.d = d; cur.t = t; } } else peaks.push(cur = { s: sg, d, t });
+      }
+      const N = peaks.length, A = peaks.reduce((a, k) => a + Math.abs(k.d), 0) / (N || 1);
+      const T0 = N > 1 ? (peaks[N - 1].t - peaks[0].t) / (N - 1) : 0;
+      // mělká vlnka musí být pravidelná, jinak je to jen roztřesená rovná čára
+      const regular = peaks.every((k, i) => !i || (k.t - peaks[i - 1].t > 0.5 * T0 && k.t - peaks[i - 1].t < 1.6 * T0));
+      const shallow = amp < 0.03 * L;
+      if (N >= (shallow ? 4 : 3) && (!shallow || regular) && Math.min(...peaks.map(k => Math.abs(k.d))) > (shallow ? 0.45 : 0.3) * amp && L > 4 * A) {
+        const T = T0, out = [], steps = Math.max(12, Math.ceil(L / (T / 10)));
+        for (let i = 0; i <= steps; i++) {
+          const t = L * i / steps, d = base(t) + peaks[0].s * A * Math.cos(Math.PI * (t - peaks[0].t) / T);
+          out.push(p[0] + ux * t - uy * d, p[1] + uy * t + ux * d);
+        }
+        return { kind: 'wave', pts: out };
+      }
+    }
+  }
   // rovná čára
   if (L > 0.6 * D && Math.sqrt(dev) < (strict ? 0.045 : 0.1) * L && len < (strict ? 1.15 : 1.4) * L) {
     let ex = p[e], ey = p[e + 1];
@@ -954,8 +992,8 @@ function recognizeShape(p, strict) {
     return { kind: 'line', pts: [p[0], p[1], ex, ey] };
   }
   // uzavřený tvar
-  if (L > (strict ? 0.2 : 0.3) * D || len < 2 * D) return null;
-  const tol = (strict ? 0.035 : 0.09) * D;
+  if (L > (strict ? 0.3 : 0.4) * D || len < 1.8 * D) return null;
+  const tol = (strict ? 0.055 : 0.1) * D;
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2; let rx = (x1 - x0) / 2 || 1, ry = (y1 - y0) / 2 || 1, eE = 0;
   for (const q of pts) eE += Math.abs(Math.hypot((q[0] - cx) / rx, (q[1] - cy) / ry) - 1);
   eE = eE / n * Math.min(rx, ry);
@@ -968,7 +1006,7 @@ function recognizeShape(p, strict) {
     for (let i = 0; i < poly.length; i++) {
       const a = poly[(i + poly.length - 1) % poly.length], b = poly[i], c = poly[(i + 1) % poly.length];
       const ang = Math.abs(Math.atan2(a[1] - b[1], a[0] - b[0]) - Math.atan2(c[1] - b[1], c[0] - b[0])) * 180 / Math.PI;
-      const short = Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.12 * D;
+      const short = Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.16 * D;
       if (Math.min(ang, 360 - ang) > 150 || short) { poly.splice(i, 1); changed = true; break; }
     }
   }
@@ -982,7 +1020,7 @@ function recognizeShape(p, strict) {
     }
     eP /= n;
   }
-  if (eP <= eE && eP < tol) {
+  if (eP <= eE * 1.3 && eP < tol) {
     if (poly.length === 4) {
       // skoro vodorovné/svislé hrany → pravidelný obdélník
       const straight = poly.every((a, i) => { const b = poly[(i + 1) % 4], t = Math.abs(Math.atan2(b[1] - a[1], b[0] - a[0])) * 180 / Math.PI % 90; return Math.min(t, 90 - t) < 14; });
@@ -1150,29 +1188,63 @@ function finishStroke(it, direct) {
   }
   const base = pg.items;
   commit([...base, it], it, direct && !it.u);
-  if (it.tool === 'pen' && !it.u && prefs.shapes && strokeDiag(it.p) * view.s >= 90) {
+  if (it.tool === 'pen' && !it.u && prefs.shapes && strokeDiag(it.p) * view.s >= 70) {
     const sh = recognizeShape(it.p, true);
     if (sh) commit([...base, shapedItem(it, sh.pts)]);
   }
 }
 
-/* Převod ručně psaného výběru na text – jen tam, kde to prohlížeč umí (Handwriting Recognition API). */
+/* Převod ručně psaného výběru na text. Kde to prohlížeč umí sám, použije se jeho rozpoznávání;
+   jinak se výběr vykreslí jako obrázek a přečte ho Tesseract (běží v tabletu, nic se nikam neposílá). */
 const canRecognize = 'createHandwritingRecognizer' in navigator && typeof HandwritingStroke !== 'undefined';
+async function recognizeNative(its) {
+  let rec;
+  try { rec = await navigator.createHandwritingRecognizer({ languages: ['cs'] }); }
+  catch { rec = await navigator.createHandwritingRecognizer({ languages: ['en'] }); }
+  const d = rec.startDrawing({ recognitionType: 'text', inputType: 'stylus' });
+  its.forEach((it, k) => { const st = new HandwritingStroke(); for (let i = 0; i < it.p.length; i += 3) st.addPoint({ x: it.p[i], y: it.p[i + 1], t: k * 1000 + i }); d.addStroke(st); });
+  const pred = await d.getPrediction(); if (rec.finish) rec.finish();
+  return (pred && pred[0] && pred[0].text) || '';
+}
+let tessWorker = null;
+async function recognizeOcr(its, b) {
+  await loadScript(TESS);
+  if (!tessWorker) { tessWorker = Tesseract.createWorker('ces'); tessWorker.catch(() => (tessWorker = null)); }
+  const w = await tessWorker;
+  await w.setParameters({ tessedit_pageseg_mode: '6', preserve_interword_spaces: '1' });
+  const hs = its.map(it => bbox(it).h).sort((x, y) => x - y), hL = Math.max(hs[Math.floor(hs.length * 0.75)], 4);
+  const k = clamp(34 / hL, 0.4, Math.min(4, 3000 / b.w, 3000 / b.h)), pad = 30, lw = Math.max(hL / 9, 2.6 / k);
+  const c = document.createElement('canvas'); c.width = Math.ceil(b.w * k + 2 * pad); c.height = Math.ceil(b.h * k + 2 * pad);
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.translate(pad - b.x * k, pad - b.y * k); ctx.scale(k, k);
+  ctx.strokeStyle = '#000'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const it of its) {
+    ctx.lineWidth = lw; ctx.beginPath(); ctx.moveTo(it.p[0], it.p[1]);
+    if (it.p.length === 3) ctx.lineTo(it.p[0] + 0.01, it.p[1]);
+    for (let i = 3; i < it.p.length; i += 3) ctx.lineTo(it.p[i], it.p[i + 1]);
+    ctx.stroke();
+  }
+  const { data } = await w.recognize(c);
+  return data.text || '';
+}
 async function selToText() {
-  const its = ed.page.items.filter(i => ed.sel && ed.sel.ids.has(i.id) && i.t === 's' && i.tool === 'pen');
-  if (!its.length) return;
+  if (!ed.sel) return;
+  const its = ed.page.items.filter(i => ed.sel.ids.has(i.id) && i.t === 's' && i.tool === 'pen');
+  if (!its.length) return toast('Ve výběru není nic napsaného perem.');
+  const b = { ...ed.sel.box }, pg = ed.page; let text = '';
+  toast('Čtu písmo… poprvé to chvíli trvá.', 0);
   try {
-    let rec;
-    try { rec = await navigator.createHandwritingRecognizer({ languages: ['cs'] }); }
-    catch { rec = await navigator.createHandwritingRecognizer({ languages: ['en'] }); }
-    const d = rec.startDrawing({ recognitionType: 'text', inputType: 'stylus' });
-    its.forEach((it, k) => { const st = new HandwritingStroke(); for (let i = 0; i < it.p.length; i += 3) st.addPoint({ x: it.p[i], y: it.p[i + 1], t: k * 1000 + i }); d.addStroke(st); });
-    const pred = await d.getPrediction(); rec.finish && rec.finish();
-    const text = pred && pred[0] && pred[0].text; if (!text) return toast('Písmo se nepodařilo přečíst.');
-    const b = ed.sel.box, ids = new Set(its.map(i => i.id));
-    const t = { id: uid(), t: 't', x: r2(b.x), y: r2(b.y), s: r2(clamp(b.h * 0.75, 10, 40)), c: its[0].c, text };
-    clearSel(); commit([...ed.page.items.filter(i => !ids.has(i.id)), t]); setSel(new Set([t.id]));
-  } catch (e) { console.error(e); toast('Rozpoznání písma tady není k dispozici.'); }
+    if (canRecognize) { try { text = await recognizeNative(its); } catch (e) { console.error(e); } }
+    if (!text) text = await recognizeOcr(its, b);
+  } catch (e) { console.error(e); toast('Písmo se nepodařilo přečíst. Poprvé je k tomu potřeba internet.', 4000); return; }
+  $('#toast').hidden = true;
+  text = text.replace(/[ \t]+\n/g, '\n').replace(/\n{2,}/g, '\n').trim();
+  const v = await formDialog({ title: 'Převést na text', text: text ? 'Zkontrolujte, co jsem přečetl, a případně opravte.' : 'Písmo se mi nepodařilo přečíst. Text můžete napsat sem.', ok: 'Nahradit textem',
+    fields: [{ key: 'text', label: 'Text', type: 'textarea', value: text }] });
+  if (!v || !v.text || ed.page !== pg) return;
+  const lines = v.text.split('\n').length, ids = new Set(its.map(i => i.id));
+  const t = { id: uid(), t: 't', x: r2(b.x), y: r2(b.y), s: r2(clamp(b.h / lines / 1.25 * 0.85, 10, 32)), c: its[0].c, text: v.text };
+  clearSel(); commit([...pg.items.filter(i => !ids.has(i.id)), t]); setSel(new Set([t.id]));
 }
 function finishLasso(a, p) {
   const pg = ed.page, ids = new Set();
@@ -1417,7 +1489,7 @@ function wire() {
   $('#pgNext').onclick = () => gotoPage(ed.idx + 1);
   $('#pgNum').onclick = () => ($('#thumbs').hidden ? openThumbs() : closeThumbs());
   $('#pgAdd').onclick = addPage;
-  if (canRecognize) { const b = h('button', { onclick: selToText }, 'Na text'); $('#selbar').prepend(b); }
+  $('#selbar').prepend(h('button', { onclick: selToText }, 'Na text'));
   $('#selDel').onclick = () => { if (!ed.sel) return; const ids = ed.sel.ids; clearSel(); commit(ed.page.items.filter(i => !ids.has(i.id))); };
   $('#selDup').onclick = () => {
     if (!ed.sel) return;
@@ -1451,4 +1523,4 @@ function wire() {
 })();
 
 // pro ladění
-window.__app = { ed, view, prefs, DB, isScribble, recognizeShape, importPdfAsNotebook, pdfToPages, insertPages };
+window.__app = { ed, view, prefs, DB, isScribble, recognizeShape, recognizeOcr, importPdfAsNotebook, pdfToPages, insertPages };
