@@ -338,7 +338,7 @@ function sweeps(p, axis, minLen) {
 function isScribble(it) {
   const p = it.p; if (p.length < 36) return false;
   const b = bbox(it), W = b.w - it.w, H = b.h - it.w;
-  return (W > 10 && sweeps(p, 0, W * 0.45) >= 4) || (H > 10 && sweeps(p, 1, H * 0.45) >= 5);
+  return (W > 12 && sweeps(p, 0, W * 0.45) >= 5) || (H > 12 && sweeps(p, 1, H * 0.45) >= 6);
 }
 function scratchTargets(sc, items) {
   const b = bbox(sc), pad = 4, hits = new Set(), sp = samples(sc);
@@ -370,23 +370,23 @@ function drawStroke(ctx, it) {
   ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = it.c;
   if (it.tool === 'hl' || it.u || n < 3) {
     if (it.tool === 'hl') ctx.globalAlpha = 0.4;
-    ctx.lineWidth = it.u || it.tool === 'hl' ? it.w : it.w * (0.35 + 1.3 * p[2]);
+    ctx.lineWidth = it.u || it.tool === 'hl' ? it.w : it.w * (0.6 + 0.8 * p[2]);
     ctx.beginPath(); ctx.moveTo(p[0], p[1]);
     if (n === 1) ctx.lineTo(p[0] + 0.01, p[1]);
     for (let i = 3; i < p.length; i += 3) ctx.lineTo(p[i], p[i + 1]);
     ctx.stroke(); ctx.globalAlpha = 1; return;
   }
   let mx = (p[0] + p[3]) / 2, my = (p[1] + p[4]) / 2;
-  ctx.lineWidth = it.w * (0.35 + 1.3 * p[2]);
+  ctx.lineWidth = it.w * (0.6 + 0.8 * p[2]);
   ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(mx, my); ctx.stroke();
   for (let i = 3; i < p.length - 3; i += 3) {
     const nx = (p[i] + p[i + 3]) / 2, ny = (p[i + 1] + p[i + 4]) / 2;
-    ctx.lineWidth = it.w * (0.35 + 1.3 * (p[i + 2] + p[i + 5]) / 2);
+    ctx.lineWidth = it.w * (0.6 + 0.8 * (p[i + 2] + p[i + 5]) / 2);
     ctx.beginPath(); ctx.moveTo(mx, my); ctx.quadraticCurveTo(p[i], p[i + 1], nx, ny); ctx.stroke();
     mx = nx; my = ny;
   }
   const e = p.length - 3;
-  ctx.lineWidth = it.w * (0.35 + 1.3 * p[e + 2]);
+  ctx.lineWidth = it.w * (0.6 + 0.8 * p[e + 2]);
   ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(p[e], p[e + 1]); ctx.stroke();
 }
 function drawItem(ctx, it) {
@@ -672,12 +672,32 @@ function inkCtx() {
   const ctx = cInk.getContext('2d'); setView(ctx); ctx.save();
   ctx.beginPath(); ctx.rect(0, 0, ed.page.w, ed.page.h); ctx.clip(); return ctx;
 }
-function drawInk() { clear(cInk); const ctx = inkCtx(); drawItems(ctx, ed.page.items, ed.hide); ctx.restore(); }
+function drawInk() {
+  clear(cInk); const ctx = inkCtx(); drawItems(ctx, ed.page.items, ed.hide);
+  if (act && act.direct) drawStroke(ctx, act.item);
+  ctx.restore();
+}
+/* Přikreslí k rozepsanému tahu jen nové body (od indexu `from`), bez překreslování celého plátna. */
+function inkAppend(it, from) {
+  const p = it.p, n = p.length / 3, ctx = inkCtx(), W = pr => it.w * (0.6 + 0.8 * pr);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = it.c;
+  const X = k => p[k * 3], Y = k => p[k * 3 + 1], Pr = k => p[k * 3 + 2];
+  for (let k = Math.max(from, 1); k < n; k++) {
+    const mx = (X(k - 1) + X(k)) / 2, my = (Y(k - 1) + Y(k)) / 2;
+    ctx.beginPath();
+    if (k === 1) { ctx.lineWidth = W(Pr(0)); ctx.moveTo(X(0), Y(0)); ctx.lineTo(mx, my); }
+    else { ctx.lineWidth = W((Pr(k - 1) + Pr(k)) / 2); ctx.moveTo((X(k - 2) + X(k - 1)) / 2, (Y(k - 2) + Y(k - 1)) / 2); ctx.quadraticCurveTo(X(k - 1), Y(k - 1), mx, my); }
+    ctx.stroke();
+    if (k === n - 1) { ctx.lineWidth = W(Pr(k)); ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(X(k), Y(k)); ctx.stroke(); }
+  }
+  if (n === 1) { ctx.lineWidth = W(Pr(0)); ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(0) + 0.01, Y(0)); ctx.stroke(); }
+  ctx.restore();
+}
 function drawLive() {
   const ctx = clear(cLive); setView(ctx); const s = view.s;
   const a = act;
   if (a) {
-    if (a.kind === 'stroke') { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, ed.page.w, ed.page.h); ctx.clip(); drawStroke(ctx, a.item); ctx.restore(); }
+    if (a.kind === 'stroke' && !a.direct) { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, ed.page.w, ed.page.h); ctx.clip(); drawStroke(ctx, a.item); ctx.restore(); }
     else if (a.kind === 'shape') drawStroke(ctx, shapeItem(a));
     else if (a.kind === 'erase' && a.last) {
       ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1 / s; ctx.beginPath(); ctx.arc(a.last.x, a.last.y, 9 / s, 0, 7); ctx.stroke();
@@ -755,10 +775,11 @@ function zoomAt(sx, sy, k) {
 }
 
 /* --- změny obsahu, zpět/znovu --- */
-function commit(items, added) {
+function commit(items, added, drawn) {
   const pg = ed.page, hh = H(pg);
   hh.u.push(pg.items); if (hh.u.length > 100) hh.u.shift(); hh.r.length = 0;
   pg.items = items; markDirty(pg); updateUndoUi();
+  if (drawn) return;
   if (added && added.tool !== 'hl' && !ed.hide) { const ctx = inkCtx(); drawItem(ctx, added); ctx.restore(); req('live'); }
   else req('ink', 'live');
 }
@@ -884,6 +905,7 @@ let lastTap = { t: 0, x: 0, y: 0 };
 function endGesture(a, e) {
   const now = performance.now(), dt = now - a.t0, p = pos(e), pg = ed.page;
   if (!gest.moved && dt < 350) {
+    if (now - lastPen < 1500) return; // těsně po psaní to byla nejspíš dlaň
     if (a.maxN === 2) { if (undo()) toast('Zpět', 900); }
     else if (a.maxN >= 3) { if (redo()) toast('Znovu', 900); }
     else if (now - lastTap.t < 350 && Math.hypot(p.sx - lastTap.x, p.sy - lastTap.y) < 40) { lastTap.t = 0; toggleZoom(p); }
@@ -901,7 +923,7 @@ function endGesture(a, e) {
 function armHold(a) {
   clearTimeout(a.hold);
   if (a.item.tool !== 'pen' || a.snap) return;
-  a.hold = setTimeout(() => { if (act === a) snapStroke(a); }, 550);
+  a.hold = setTimeout(() => { if (act === a) snapStroke(a); }, 650);
 }
 function snapStroke(a) {
   const it = a.item, p = it.p, n = p.length / 3; if (n < 8) return;
@@ -913,7 +935,7 @@ function snapStroke(a) {
     dev = Math.max(dev, segDist2(p[i], p[i + 1], p[0], p[1], p[e], p[e + 1]));
   }
   const D = Math.hypot(x1 - x0, y1 - y0), L = Math.hypot(p[e] - p[0], p[e + 1] - p[1]);
-  if (D * view.s < 30) return;
+  if (D * view.s < 60) return; // malá písmena nenarovnávat
   let pts;
   if (L > 0.6 * D && Math.sqrt(dev) < Math.max(4 / view.s, 0.1 * L) && len < 1.4 * L) { pts = [p[0], p[1], p[e], p[e + 1]]; a.snap = 'line'; }
   else if (L < 0.3 * D && len > 2 * D) {
@@ -927,7 +949,7 @@ function snapStroke(a) {
     a.snap = 'fixed';
   } else return;
   const q = []; for (let i = 0; i < pts.length; i += 2) q.push(r2(pts[i]), r2(pts[i + 1]), 0.5);
-  a.item = { ...it, u: 1, p: q };
+  a.item = { ...it, u: 1, p: q }; a.direct = false; req('ink');
   if (navigator.vibrate) navigator.vibrate(12);
   req('live');
 }
@@ -947,11 +969,19 @@ function onDown(e) {
   if (ed.textEdit) { commitText(); if (prefs.tool === 'text' && e.pointerType !== 'touch') return; }
   if (e.pointerType === 'pen') {
     lastPen = now; ptrs.forEach((_, id) => ignored.add(id)); ptrs.clear();
-    if (act && act.kind === 'gesture') act = null;
+    if (act && act.kind === 'gesture') {
+      // dlaň stihla stránkou pohnout dřív, než dosedlo pero: vrátit pohled zpět
+      if (gest && gest.moved) { Object.assign(view, act.v0); req('bg', 'ink', 'live'); }
+      act = null;
+    } else if (act && act.pid !== e.pointerId) {
+      // předchozí tah neskončil korektně: uložit ho, ať nový tah nepropadne
+      const a = act; clearTimeout(a.hold);
+      if (a.kind === 'stroke') { act = null; finishStroke(a.item, a.direct); } else cancelAct();
+    }
   }
   if (e.pointerType === 'touch') {
     // opřená dlaň: dotyk těsně po peru, během psaní perem nebo s velkou plochou
-    if ((act && act.pen) || now - lastPen < 400 || e.width > 60 || e.height > 60) { ignored.add(e.pointerId); return; }
+    if ((act && act.pen) || now - lastPen < 700 || e.width > 45 || e.height > 45) { ignored.add(e.pointerId); return; }
     const p = pos(e); ptrs.set(e.pointerId, { x: p.sx, y: p.sy });
     try { cLive.setPointerCapture(e.pointerId); } catch {}
     if (!prefs.finger || ptrs.size > 1) {
@@ -968,8 +998,9 @@ function onDown(e) {
   hover = null;
   if (tool !== 'lasso' && ed.sel) clearSel();
   if (tool === 'pen' || tool === 'hl') {
-    act = { ...base, kind: 'stroke', item: { id: uid(), t: 's', tool, c: prefs.color[tool], w: WIDTHS[tool][prefs.wi[tool]], p: [r2(p.x), r2(p.y), pressure(e)] }, anchor: p };
+    act = { ...base, kind: 'stroke', item: { id: uid(), t: 's', tool, c: prefs.color[tool], w: WIDTHS[tool][prefs.wi[tool]], p: [r2(p.x), r2(p.y), pressure(e)] }, anchor: p, fx: p.x, fy: p.y, fp: pressure(e), direct: tool === 'pen' };
     armHold(act);
+    if (act.direct) { inkAppend(act.item, 0); return; }
   } else if (tool === 'eraser') { act = { ...base, kind: 'erase', orig: ed.page.items, last: p }; eraseAt(p, p); }
   else if (tool === 'shape') act = { ...base, kind: 'shape', x0: p.x, y0: p.y, x1: p.x, y1: p.y };
   else if (tool === 'text') act = { ...base, kind: 'text', p };
@@ -989,7 +1020,6 @@ function onMove(e) {
   if (ignored.has(e.pointerId)) return;
   if (ptrs.has(e.pointerId)) { const p = pos(e); ptrs.set(e.pointerId, { x: p.sx, y: p.sy }); }
   if (act && act.kind === 'gesture') { gMove(); return; }
-  if (!act && e.pointerType === 'pen') { hover = pos(e); hover.erase = !!(e.buttons & 34); req('live'); return; }
   if (!act || act.pid !== e.pointerId) return;
   const a = act, p = pos(e);
   if (a.kind === 'stroke' && a.snap) {
@@ -997,12 +1027,15 @@ function onMove(e) {
   } else if (a.kind === 'stroke') {
     if (Math.hypot(p.sx - a.anchor.sx, p.sy - a.anchor.sy) > 5) { a.anchor = p; armHold(a); }
     let evs = e.getCoalescedEvents ? e.getCoalescedEvents() : null; if (!evs || !evs.length) evs = [e];
-    const pts = a.item.p, min = 0.25 / (view.s * view.s);
+    const pts = a.item.p, min = 0.25 / (view.s * view.s), from = pts.length / 3;
     for (const ev of evs) {
-      const q = pos(ev), n = pts.length, dx = q.x - pts[n - 3], dy = q.y - pts[n - 2];
+      const q = pos(ev), n = pts.length;
+      a.fx += (q.x - a.fx) * 0.75; a.fy += (q.y - a.fy) * 0.75; a.fp += (pressure(ev) - a.fp) * 0.35;
+      const dx = a.fx - pts[n - 3], dy = a.fy - pts[n - 2];
       if (dx * dx + dy * dy < min) continue;
-      pts.push(r2(q.x), r2(q.y), pressure(ev));
+      pts.push(r2(a.fx), r2(a.fy), r2(a.fp));
     }
+    if (a.direct) { if (pts.length / 3 > from) inkAppend(a.item, from); return; }
   } else if (a.kind === 'erase') { eraseAt(a.last, p); a.last = p; }
   else if (a.kind === 'shape') { a.x1 = p.x; a.y1 = p.y; }
   else if (a.kind === 'lasso') { a.pts.push(p.x, p.y); a.far = Math.max(a.far || 0, Math.hypot(p.sx - a.s0.sx, p.sy - a.s0.sy)); }
@@ -1019,7 +1052,13 @@ function onUp(e) {
   if (!act || act.pid !== e.pointerId) return;
   if (e.type === 'pointercancel') return cancelAct();
   const a = act; act = null; const pg = ed.page; clearTimeout(a.hold);
-  if (a.kind === 'stroke') finishStroke(a.item);
+  if (a.kind === 'stroke') {
+    if (!a.snap) {
+      const q = pos(e), pts = a.item.p, n = pts.length;
+      if (Math.hypot(q.x - pts[n - 3], q.y - pts[n - 2]) * view.s > 0.5) { pts.push(r2(q.x), r2(q.y), r2(a.fp)); if (a.direct) inkAppend(a.item, n / 3); }
+    }
+    finishStroke(a.item, a.direct);
+  }
   else if (a.kind === 'erase') { if (pg.items !== a.orig) { const cur = pg.items; pg.items = a.orig; commit(cur); } }
   else if (a.kind === 'shape') { if (Math.hypot(a.x1 - a.x0, a.y1 - a.y0) * view.s > 6) { const it = shapeItem(a); commit([...pg.items, it], it); } }
   else if (a.kind === 'text') {
@@ -1030,7 +1069,7 @@ function onUp(e) {
   else if (a.kind === 'scale') { const b = ed.sel.box; if (a.k !== 1) replaceSel(i => transformItem(i, 0, 0, a.k, b.x, b.y)); else ed.hide = null; }
   req('ink', 'live');
 }
-function finishStroke(it) {
+function finishStroke(it, direct) {
   const pg = ed.page, p = it.p;
   if (it.tool === 'hl' && p.length >= 6) {
     // rovnou čáru zvýrazňovače narovnáme
@@ -1045,7 +1084,7 @@ function finishStroke(it) {
     const hits = scratchTargets(it, pg.items);
     if (hits.size) { if (navigator.vibrate) navigator.vibrate(12); commit(pg.items.filter(i => !hits.has(i.id))); return; }
   }
-  commit([...pg.items, it], it);
+  commit([...pg.items, it], it, direct && !it.u);
 }
 function finishLasso(a, p) {
   const pg = ed.page, ids = new Set();
