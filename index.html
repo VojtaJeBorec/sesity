@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Sešity</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#f4f5f8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Sešity">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<main id="library">
+  <header class="libhead">
+    <h1>Sešity</h1>
+    <input id="search" type="search" placeholder="Hledat sešit…" autocomplete="off">
+    <button id="btnImport" class="btn">Nahrát PDF</button>
+    <button id="btnNew" class="btn primary">+ Nový sešit</button>
+    <button id="btnLibMore" class="iconbtn" aria-label="Další možnosti"></button>
+  </header>
+  <div id="shelf"></div>
+</main>
+
+<main id="editor" hidden>
+  <div class="bar">
+    <button id="btnBack" class="iconbtn" aria-label="Zpět na sešity"></button>
+    <button id="nbTitle" class="title"></button>
+    <span class="grow"></span>
+    <button id="btnUndo" class="iconbtn" aria-label="Zpět"></button>
+    <button id="btnRedo" class="iconbtn" aria-label="Znovu"></button>
+    <button id="btnFinger" class="iconbtn" aria-label="Kreslit prstem"></button>
+    <button id="btnThumbs" class="iconbtn" aria-label="Přehled stránek"></button>
+    <button id="btnMore" class="iconbtn" aria-label="Další možnosti"></button>
+  </div>
+  <div class="bar tools">
+    <div id="tools" class="group"></div>
+    <div class="sep"></div>
+    <div id="colors" class="group"></div>
+    <div class="sep"></div>
+    <div id="widths" class="group"></div>
+  </div>
+  <div id="stage">
+    <canvas id="cBg"></canvas>
+    <canvas id="cInk"></canvas>
+    <canvas id="cLive"></canvas>
+    <textarea id="textbox" hidden wrap="off" spellcheck="false"></textarea>
+    <div id="selbar" hidden>
+      <button id="selDup">Duplikovat</button>
+      <button id="selDel" class="danger">Smazat</button>
+    </div>
+    <div id="pager">
+      <button id="pgPrev" class="iconbtn" aria-label="Předchozí stránka"></button>
+      <button id="pgNum"></button>
+      <button id="pgNext" class="iconbtn" aria-label="Další stránka"></button>
+      <button id="pgAdd" class="iconbtn" aria-label="Přidat stránku"></button>
+    </div>
+    <aside id="thumbs" hidden></aside>
+  </div>
+</main>
+
+<input id="filePdf" type="file" accept=".pdf,application/pdf" hidden>
+<input id="fileImg" type="file" accept="image/*" hidden>
+<input id="fileBackup" type="file" accept=".json,application/json" hidden>
+<div id="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
