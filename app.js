@@ -610,7 +610,11 @@ async function restore(file) {
 function showHelp() {
   formDialog({ title: 'Jak na to', ok: 'Rozumím', cancel: '', html: `<ul>
     <li><b>Škrtnutí maže.</b> Co napíšete perem a pak rychle přeškrtáte tam a zpět (cik-cak), to zmizí. Když se to stane omylem, klepněte na šipku Zpět.</li>
-    <li><b>Prst posouvá, pero píše.</b> Dvěma prsty stránku přiblížíte. Kreslení prstem zapnete ikonou ruky.</li>
+    <li><b>Tlačítko na peru = guma.</b> Držte tlačítko na S Penu a přejeďte přes to, co chcete smazat.</li>
+    <li><b>Podržte pero na konci tahu</b> a čára se narovná; nakreslené kolečko nebo obdélník se vyhladí.</li>
+    <li><b>Prst posouvá, pero píše.</b> Dvěma prsty stránku přiblížíte, dvojitým klepnutím prstem zvětšíte a vrátíte.</li>
+    <li><b>Klepnutí dvěma prsty = zpět</b>, třemi prsty = znovu.</li>
+    <li><b>Švih prstem do strany</b> otočí na další nebo předchozí stránku.</li>
     <li><b>Prezentace.</b> Nahrajte PDF a pište přímo do něj. PowerPoint je potřeba nejdřív uložit jako PDF.</li>
     <li><b>Laso</b> vybere, co obkroužíte. Výběr jde přesunout, zvětšit za roh, přebarvit nebo smazat.</li>
     <li><b>Zvýrazňovač</b> rovnou čáru sám narovná.</li>
@@ -683,6 +687,14 @@ function drawLive() {
       ctx.stroke(); ctx.setLineDash([]);
     }
   }
+  if (!a && hover) {
+    const t = hover.erase ? 'eraser' : prefs.tool;
+    if (t === 'eraser') { ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.lineWidth = 1 / s; ctx.beginPath(); ctx.arc(hover.x, hover.y, 9 / s, 0, 7); ctx.stroke(); }
+    else if (t === 'pen' || t === 'hl') {
+      ctx.fillStyle = prefs.color[t]; ctx.globalAlpha = t === 'hl' ? 0.4 : 0.7;
+      ctx.beginPath(); ctx.arc(hover.x, hover.y, Math.max(WIDTHS[t][prefs.wi[t]] / 2, 1.5 / s), 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+    }
+  }
   if (ed.sel) {
     const b = ed.sel.box; let k = 1, dx = 0, dy = 0;
     if (a && a.kind === 'move') { dx = a.dx; dy = a.dy; } else if (a && a.kind === 'scale') k = a.k;
@@ -703,10 +715,16 @@ function resizeStage() {
   for (const c of [cBg, cInk, cLive]) { c.width = Math.round(r.width * DPR); c.height = Math.round(r.height * DPR); }
   if (ed.page) { clampView(); req('bg', 'ink', 'live'); }
 }
+function fitScale() {
+  const pg = ed.page;
+  return Math.max(0.1, Math.min((SR.width - 24) / pg.w, pg.w > pg.h ? (SR.height - 100) / pg.h : Infinity));
+}
+function toggleZoom(p) {
+  if (view.s > fitScale() * 1.15) fitView(); else { zoomAt(p.sx, p.sy, 2); viewSettled(); }
+}
 function fitView() {
   const pg = ed.page; if (!pg) return;
-  view.s = Math.min((SR.width - 24) / pg.w, pg.w > pg.h ? (SR.height - 100) / pg.h : Infinity);
-  view.s = Math.max(view.s, 0.1);
+  view.s = fitScale();
   view.tx = (SR.width - pg.w * view.s) / 2;
   view.ty = pg.h * view.s < SR.height - 24 ? Math.max(12, (SR.height - 70 - pg.h * view.s) / 2) : 12;
   req('bg', 'ink', 'live'); viewSettled();
@@ -745,12 +763,12 @@ function commit(items, added) {
   else req('ink', 'live');
 }
 function undo() {
-  commitText(); const pg = ed.page, hh = H(pg); if (!hh.u.length) return;
-  clearSel(); hh.r.push(pg.items); pg.items = hh.u.pop(); markDirty(pg); updateUndoUi(); req('ink', 'live');
+  commitText(); const pg = ed.page, hh = H(pg); if (!hh.u.length) return false;
+  clearSel(); hh.r.push(pg.items); pg.items = hh.u.pop(); markDirty(pg); updateUndoUi(); req('ink', 'live'); return true;
 }
 function redo() {
-  commitText(); const pg = ed.page, hh = H(pg); if (!hh.r.length) return;
-  clearSel(); hh.u.push(pg.items); pg.items = hh.r.pop(); markDirty(pg); updateUndoUi(); req('ink', 'live');
+  commitText(); const pg = ed.page, hh = H(pg); if (!hh.r.length) return false;
+  clearSel(); hh.u.push(pg.items); pg.items = hh.r.pop(); markDirty(pg); updateUndoUi(); req('ink', 'live'); return true;
 }
 function updateUndoUi() { const hh = H(ed.page); $('#btnUndo').disabled = !hh.u.length; $('#btnRedo').disabled = !hh.r.length; }
 
@@ -852,7 +870,8 @@ function gMove() {
   const ps = [...ptrs.values()], n = ps.length; if (!n) return;
   if (n !== gest.n) gSnap();
   const cx = ps.reduce((a, p) => a + p.x, 0) / n, cy = ps.reduce((a, p) => a + p.y, 0) / n;
-  if (!gest.moved && n === 1 && Math.hypot(cx - gest.cx, cy - gest.cy) < 6) return;
+  const dNow = n > 1 ? Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y) : 0;
+  if (!gest.moved && Math.hypot(cx - gest.cx, cy - gest.cy) < 8 && (n === 1 || Math.abs(dNow - gest.d) < 14)) return;
   gest.moved = true;
   let k = 1;
   if (n > 1 && gest.d > 10) k = clamp(gest.v.s * Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y) / gest.d, 0.15, 8) / gest.v.s;
@@ -860,8 +879,63 @@ function gMove() {
   view.tx = cx - (gest.cx - gest.v.tx) * k; view.ty = cy - (gest.cy - gest.v.ty) * k;
   clampView(); req('bg', 'ink', 'live');
 }
+/* Konec gesta prsty: klepnutí dvěma prsty = zpět, třemi = znovu, dvojité klepnutí = lupa, švih do strany = další stránka. */
+let lastTap = { t: 0, x: 0, y: 0 };
+function endGesture(a, e) {
+  const now = performance.now(), dt = now - a.t0, p = pos(e), pg = ed.page;
+  if (!gest.moved && dt < 350) {
+    if (a.maxN === 2) { if (undo()) toast('Zpět', 900); }
+    else if (a.maxN >= 3) { if (redo()) toast('Znovu', 900); }
+    else if (now - lastTap.t < 350 && Math.hypot(p.sx - lastTap.x, p.sy - lastTap.y) < 40) { lastTap.t = 0; toggleZoom(p); }
+    else lastTap = { t: now, x: p.sx, y: p.sy };
+    return;
+  }
+  if (a.maxN === 1 && dt < 450 && pg.w * a.v0.s <= SR.width + 2) {
+    const dx = p.sx - a.p0.x, dy = p.sy - a.p0.y, j = ed.idx + (dx < 0 ? 1 : -1);
+    if (Math.abs(dx) > 70 && Math.abs(dx) > 2.5 * Math.abs(dy) && j >= 0 && j < ed.pages.length) return gotoPage(j);
+  }
+  viewSettled();
+}
+
+/* Podržení pera na konci tahu: rovná čára se narovná, uzavřený tvar se změní na obdélník nebo elipsu. */
+function armHold(a) {
+  clearTimeout(a.hold);
+  if (a.item.tool !== 'pen' || a.snap) return;
+  a.hold = setTimeout(() => { if (act === a) snapStroke(a); }, 550);
+}
+function snapStroke(a) {
+  const it = a.item, p = it.p, n = p.length / 3; if (n < 8) return;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, len = 0, dev = 0;
+  const e = p.length - 3;
+  for (let i = 0; i < p.length; i += 3) {
+    x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); y0 = Math.min(y0, p[i + 1]); y1 = Math.max(y1, p[i + 1]);
+    if (i) len += Math.hypot(p[i] - p[i - 3], p[i + 1] - p[i - 2]);
+    dev = Math.max(dev, segDist2(p[i], p[i + 1], p[0], p[1], p[e], p[e + 1]));
+  }
+  const D = Math.hypot(x1 - x0, y1 - y0), L = Math.hypot(p[e] - p[0], p[e + 1] - p[1]);
+  if (D * view.s < 30) return;
+  let pts;
+  if (L > 0.6 * D && Math.sqrt(dev) < Math.max(4 / view.s, 0.1 * L) && len < 1.4 * L) { pts = [p[0], p[1], p[e], p[e + 1]]; a.snap = 'line'; }
+  else if (L < 0.3 * D && len > 2 * D) {
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, rx = (x1 - x0) / 2 || 1, ry = (y1 - y0) / 2 || 1; let eE = 0, eR = 0;
+    for (let i = 0; i < p.length; i += 3) {
+      const ux = Math.abs(p[i] - cx) / rx, uy = Math.abs(p[i + 1] - cy) / ry;
+      eE += Math.abs(Math.hypot(ux, uy) - 1); eR += Math.min(1 - ux, 1 - uy);
+    }
+    if (eE < eR) { pts = []; for (let i = 0; i <= 48; i++) pts.push(cx + rx * Math.cos(i / 24 * Math.PI), cy + ry * Math.sin(i / 24 * Math.PI)); }
+    else pts = [x0, y0, x1, y0, x1, y1, x0, y1, x0, y0];
+    a.snap = 'fixed';
+  } else return;
+  const q = []; for (let i = 0; i < pts.length; i += 2) q.push(r2(pts[i]), r2(pts[i + 1]), 0.5);
+  a.item = { ...it, u: 1, p: q };
+  if (navigator.vibrate) navigator.vibrate(12);
+  req('live');
+}
+
+let hover = null;
 function cancelAct() {
   const a = act; act = null; if (!a) return;
+  clearTimeout(a.hold);
   if (a.kind === 'erase') ed.page.items = a.orig;
   if (a.kind === 'move' || a.kind === 'scale') ed.hide = null;
   req('ink', 'live');
@@ -881,17 +955,21 @@ function onDown(e) {
     const p = pos(e); ptrs.set(e.pointerId, { x: p.sx, y: p.sy });
     try { cLive.setPointerCapture(e.pointerId); } catch {}
     if (!prefs.finger || ptrs.size > 1) {
-      if (act && act.kind !== 'gesture') cancelAct();
-      act = { kind: 'gesture' }; gest = null; gSnap(); return;
+      if (act && act.kind === 'gesture') { act.maxN = Math.max(act.maxN, ptrs.size); gSnap(); return; }
+      if (act) cancelAct();
+      act = { kind: 'gesture', t0: now, maxN: ptrs.size, v0: { ...view }, p0: { x: p.sx, y: p.sy } }; gest = null; gSnap(); return;
     }
   }
   if (act) return;
   try { cLive.setPointerCapture(e.pointerId); } catch {}
   const p = pos(e), base = { pid: e.pointerId, pen: e.pointerType === 'pen' };
-  const tool = base.pen && (e.button === 5 || (e.buttons & 32)) ? 'eraser' : prefs.tool;
+  // tlačítko na peru (S Pen) nebo opačný konec pera = guma
+  const tool = base.pen && (e.button === 5 || e.button === 2 || (e.buttons & 34)) ? 'eraser' : prefs.tool;
+  hover = null;
   if (tool !== 'lasso' && ed.sel) clearSel();
   if (tool === 'pen' || tool === 'hl') {
-    act = { ...base, kind: 'stroke', item: { id: uid(), t: 's', tool, c: prefs.color[tool], w: WIDTHS[tool][prefs.wi[tool]], p: [r2(p.x), r2(p.y), pressure(e)] } };
+    act = { ...base, kind: 'stroke', item: { id: uid(), t: 's', tool, c: prefs.color[tool], w: WIDTHS[tool][prefs.wi[tool]], p: [r2(p.x), r2(p.y), pressure(e)] }, anchor: p };
+    armHold(act);
   } else if (tool === 'eraser') { act = { ...base, kind: 'erase', orig: ed.page.items, last: p }; eraseAt(p, p); }
   else if (tool === 'shape') act = { ...base, kind: 'shape', x0: p.x, y0: p.y, x1: p.x, y1: p.y };
   else if (tool === 'text') act = { ...base, kind: 'text', p };
@@ -911,9 +989,13 @@ function onMove(e) {
   if (ignored.has(e.pointerId)) return;
   if (ptrs.has(e.pointerId)) { const p = pos(e); ptrs.set(e.pointerId, { x: p.sx, y: p.sy }); }
   if (act && act.kind === 'gesture') { gMove(); return; }
+  if (!act && e.pointerType === 'pen') { hover = pos(e); hover.erase = !!(e.buttons & 34); req('live'); return; }
   if (!act || act.pid !== e.pointerId) return;
   const a = act, p = pos(e);
-  if (a.kind === 'stroke') {
+  if (a.kind === 'stroke' && a.snap) {
+    if (a.snap === 'line') { const q = a.item.p; a.item = { ...a.item, p: [q[0], q[1], 0.5, r2(p.x), r2(p.y), 0.5] }; }
+  } else if (a.kind === 'stroke') {
+    if (Math.hypot(p.sx - a.anchor.sx, p.sy - a.anchor.sy) > 5) { a.anchor = p; armHold(a); }
     let evs = e.getCoalescedEvents ? e.getCoalescedEvents() : null; if (!evs || !evs.length) evs = [e];
     const pts = a.item.p, min = 0.25 / (view.s * view.s);
     for (const ev of evs) {
@@ -931,12 +1013,12 @@ function onMove(e) {
 function onUp(e) {
   if (ignored.delete(e.pointerId)) return;
   if (ptrs.delete(e.pointerId) && act && act.kind === 'gesture') {
-    if (!ptrs.size) { act = null; viewSettled(); } else gSnap();
+    if (!ptrs.size) { const g = act; act = null; endGesture(g, e); } else gSnap();
     return;
   }
   if (!act || act.pid !== e.pointerId) return;
   if (e.type === 'pointercancel') return cancelAct();
-  const a = act; act = null; const pg = ed.page;
+  const a = act; act = null; const pg = ed.page; clearTimeout(a.hold);
   if (a.kind === 'stroke') finishStroke(a.item);
   else if (a.kind === 'erase') { if (pg.items !== a.orig) { const cur = pg.items; pg.items = a.orig; commit(cur); } }
   else if (a.kind === 'shape') { if (Math.hypot(a.x1 - a.x0, a.y1 - a.y0) * view.s > 6) { const it = shapeItem(a); commit([...pg.items, it], it); } }
@@ -959,9 +1041,9 @@ function finishStroke(it) {
       it.p = [p[0], p[1], 0.5, p[e], y1, 0.5];
     }
   }
-  if (it.tool === 'pen' && prefs.scratch && isScribble(it)) {
+  if (it.tool === 'pen' && !it.u && prefs.scratch && isScribble(it)) {
     const hits = scratchTargets(it, pg.items);
-    if (hits.size) { commit(pg.items.filter(i => !hits.has(i.id))); return; }
+    if (hits.size) { if (navigator.vibrate) navigator.vibrate(12); commit(pg.items.filter(i => !hits.has(i.id))); return; }
   }
   commit([...pg.items, it], it);
 }
@@ -994,6 +1076,7 @@ cLive.addEventListener('pointerdown', onDown);
 cLive.addEventListener('pointermove', onMove);
 cLive.addEventListener('pointerup', onUp);
 cLive.addEventListener('pointercancel', onUp);
+cLive.addEventListener('pointerleave', () => { if (hover) { hover = null; req('live'); } });
 cLive.addEventListener('contextmenu', e => e.preventDefault());
 cLive.addEventListener('wheel', e => {
   e.preventDefault(); commitText();
@@ -1143,6 +1226,7 @@ async function openNotebook(id) {
   ed.nb = nb; ed.pages = nb.pages.map(pid => byId.get(pid)).filter(Boolean);
   if (!ed.pages.length) { const n = { id: uid(), nb: id, ...A4, bg: { type: nb.paper || 'lined' }, items: [] }; ed.pages.push(n); nb.pages = [n.id]; await DB.put('pages', n); await DB.put('notebooks', nb); }
   $('#library').hidden = true; $('#editor').hidden = false; closeThumbs();
+  if (!(history.state && history.state.nb)) history.pushState({ nb: 1 }, '');
   $('#nbTitle').textContent = nb.name;
   renderToolbar(); resizeStage(); gotoPage(nb.last || 0);
 }
@@ -1194,7 +1278,8 @@ function wire() {
     { label: 'Nápověda', fn: showHelp },
   ]);
 
-  $('#btnBack').onclick = closeNotebook;
+  $('#btnBack').onclick = () => (history.state && history.state.nb ? history.back() : closeNotebook());
+  addEventListener('popstate', () => { closeMenu(); if (ed.nb) closeNotebook(); });
   $('#nbTitle').onclick = async () => { if (await editNotebook(ed.nb)) $('#nbTitle').textContent = ed.nb.name; };
   $('#btnUndo').onclick = undo; $('#btnRedo').onclick = redo;
   $('#btnFinger').onclick = () => { prefs.finger = !prefs.finger; savePrefs(); renderToolbar(); toast(prefs.finger ? 'Prst teď kreslí. Posouvejte dvěma prsty.' : 'Prst posouvá stránku, píše jen pero.'); };
@@ -1227,6 +1312,7 @@ function wire() {
 
 (async function init() {
   wire();
+  if (history.state && history.state.nb) history.replaceState(null, '');
   try { await DB.open(); } catch (e) { console.error(e); document.body.textContent = 'Aplikaci se nepodařilo spustit: prohlížeč nepovolil ukládání dat. Zkuste vypnout anonymní režim.'; return; }
   const g = await DB.get('meta', 'groups');
   if (g) state.groups = g.value; else { state.groups = ['ČVUT MÚVS', 'Základní škola']; await saveGroups(); }

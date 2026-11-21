@@ -1,7 +1,7 @@
 /* Offline režim: soubory aplikace se berou ze sítě, a když síť není, z mezipaměti.
    Knihovny z CDN se stáhnou jednou a pak se berou z mezipaměti. */
-const CACHE = 'sesity-v1';
-const APP = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg'];
+const CACHE = 'sesity-v2';
+const APP = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 const CDN = [
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',

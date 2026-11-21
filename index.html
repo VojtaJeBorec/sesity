@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>Sešity</title>
 <link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#f4f5f8">
+<meta name="theme-color" content="#ffffff">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Sešity">
@@ -27,22 +27,25 @@
 </main>
 
 <main id="editor" hidden>
-  <div class="bar">
-    <button id="btnBack" class="iconbtn" aria-label="Zpět na sešity"></button>
-    <button id="nbTitle" class="title"></button>
-    <span class="grow"></span>
-    <button id="btnUndo" class="iconbtn" aria-label="Zpět"></button>
-    <button id="btnRedo" class="iconbtn" aria-label="Znovu"></button>
-    <button id="btnFinger" class="iconbtn" aria-label="Kreslit prstem"></button>
-    <button id="btnThumbs" class="iconbtn" aria-label="Přehled stránek"></button>
-    <button id="btnMore" class="iconbtn" aria-label="Další možnosti"></button>
-  </div>
-  <div class="bar tools">
-    <div id="tools" class="group"></div>
-    <div class="sep"></div>
-    <div id="colors" class="group"></div>
-    <div class="sep"></div>
-    <div id="widths" class="group"></div>
+  <div class="topbar">
+    <div class="tb-left">
+      <button id="btnBack" class="iconbtn" aria-label="Zpět na sešity"></button>
+      <button id="nbTitle" class="title"></button>
+    </div>
+    <div class="tb-tools">
+      <div id="tools" class="group"></div>
+      <div class="sep"></div>
+      <div id="colors" class="group"></div>
+      <div class="sep"></div>
+      <div id="widths" class="group"></div>
+    </div>
+    <div class="tb-right">
+      <button id="btnUndo" class="iconbtn" aria-label="Zpět"></button>
+      <button id="btnRedo" class="iconbtn" aria-label="Znovu"></button>
+      <button id="btnFinger" class="iconbtn" aria-label="Kreslit prstem"></button>
+      <button id="btnThumbs" class="iconbtn" aria-label="Přehled stránek"></button>
+      <button id="btnMore" class="iconbtn" aria-label="Další možnosti"></button>
+    </div>
   </div>
   <div id="stage">
     <canvas id="cBg"></canvas>
